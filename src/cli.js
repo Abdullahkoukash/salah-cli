@@ -124,28 +124,32 @@ async function showMainMenu() {
         console.log(`  ${chalk.hex('#FFA726')('No mosque configured — select "Change mosque" to get started.')}`); row++;
     }
 
+    let allPrayers = [];
     let nextPrayerInfo = null;
+    let tomorrowFajrTime = null;
     if (mosque) {
         try {
             const data = await fetchTodayTimes(mosque.slug, mosque.name);
             if (data && data.times) {
                 const names = ['Fajr', 'Shurooq', 'Dhuhr', 'Asr', 'Maghrib', 'Isha'];
-                const now = new Date();
-                const currentMinutes = now.getHours() * 60 + now.getMinutes();
                 for (let i = 0; i < data.times.length; i++) {
                     if (!data.times[i]) continue;
                     const [h, m] = data.times[i].split(':').map(Number);
-                    const prayerMinutes = h * 60 + m;
-                    if (prayerMinutes > currentMinutes) {
-                        nextPrayerInfo = { name: names[i], time: data.times[i], minutes: prayerMinutes, tomorrow: false };
+                    allPrayers.push({ name: names[i], time: data.times[i], minutes: h * 60 + m, index: i });
+                }
+                const now = new Date();
+                const currentMinutes = now.getHours() * 60 + now.getMinutes();
+                for (const p of allPrayers) {
+                    if (p.minutes > currentMinutes) {
+                        nextPrayerInfo = { ...p, tomorrow: false };
                         break;
                     }
                 }
                 if (!nextPrayerInfo) {
-                    const tomorrowFajr = await getTomorrowFajr(mosque.slug);
-                    if (tomorrowFajr) {
-                        const [fh, fm] = tomorrowFajr.split(':').map(Number);
-                        nextPrayerInfo = { name: 'Fajr', time: tomorrowFajr, minutes: fh * 60 + fm, tomorrow: true };
+                    tomorrowFajrTime = await getTomorrowFajr(mosque.slug);
+                    if (tomorrowFajrTime) {
+                        const [fh, fm] = tomorrowFajrTime.split(':').map(Number);
+                        nextPrayerInfo = { name: 'Fajr', time: tomorrowFajrTime, minutes: fh * 60 + fm, tomorrow: true };
                     }
                 }
             }
@@ -153,6 +157,7 @@ async function showMainMenu() {
     }
 
     const y = chalk.hex('#FFD54F');
+    const r = chalk.hex('#EF5350').bold;
 
     const buildClockLine = () => {
         const n = new Date();
@@ -162,7 +167,50 @@ async function showMainMenu() {
         return `  ${y.bold(wd)}  ${y('·')}  ${y(ds)}  ${y('·')}  ${y.bold(ts)}`;
     };
 
+    let blinkState = null;
+
+    const advanceToNextPrayer = () => {
+        if (!nextPrayerInfo) return;
+        const now = new Date();
+        const currentMinutes = now.getHours() * 60 + now.getMinutes();
+
+        const curIdx = nextPrayerInfo.tomorrow ? -1
+            : allPrayers.findIndex(p => p.name === nextPrayerInfo.name && p.minutes === nextPrayerInfo.minutes);
+
+        let found = false;
+        for (let i = curIdx + 1; i < allPrayers.length; i++) {
+            if (allPrayers[i].minutes > currentMinutes) {
+                nextPrayerInfo = { ...allPrayers[i], tomorrow: false };
+                found = true;
+                break;
+            }
+        }
+
+        if (!found) {
+            if (tomorrowFajrTime) {
+                const [fh, fm] = tomorrowFajrTime.split(':').map(Number);
+                nextPrayerInfo = { name: 'Fajr', time: tomorrowFajrTime, minutes: fh * 60 + fm, tomorrow: true };
+            } else {
+                nextPrayerInfo = null;
+            }
+        }
+    };
+
     const buildCountdownLine = () => {
+        if (blinkState) {
+            const elapsed = Math.floor((Date.now() - blinkState.startedAt) / 1000);
+            if (elapsed >= 10) {
+                blinkState = null;
+                advanceToNextPrayer();
+            } else {
+                const visible = elapsed % 2 === 0;
+                if (visible) {
+                    return `  ${r(`It's time for ${blinkState.prayerName}!`)}`;
+                } else {
+                    return '  ';
+                }
+            }
+        }
         if (!nextPrayerInfo) return null;
         const n = new Date();
         const curMins = n.getHours() * 60 + n.getMinutes();
@@ -173,7 +221,10 @@ async function showMainMenu() {
         } else {
             diffSecs = (nextPrayerInfo.minutes - curMins) * 60 - curSecs;
         }
-        if (diffSecs <= 0) return null;
+        if (diffSecs <= 0) {
+            blinkState = { prayerName: nextPrayerInfo.name, startedAt: Date.now() };
+            return `  ${r(`It's time for ${nextPrayerInfo.name}!`)}`;
+        }
         const hrs = Math.floor(diffSecs / 3600);
         const mins = Math.floor((diffSecs % 3600) / 60);
         const secs = diffSecs % 60;
@@ -203,7 +254,7 @@ async function showMainMenu() {
             process.stdout.write('\x1B[2K');
             process.stdout.write(buildClockLine());
             const cd = buildCountdownLine();
-            if (cd) {
+            if (cd !== null) {
                 process.stdout.write(`\x1B[${countdownRow};1H`);
                 process.stdout.write('\x1B[2K');
                 process.stdout.write(cd);
