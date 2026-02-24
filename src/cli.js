@@ -91,7 +91,14 @@ async function getTomorrowFajr(slug) {
     }
 }
 
+let activeClockInterval = null;
+
 async function showMainMenu() {
+    if (activeClockInterval) {
+        clearInterval(activeClockInterval);
+        activeClockInterval = null;
+    }
+
     const mosque = getMosque();
 
     process.stdout.write('\x1Bc');
@@ -169,30 +176,37 @@ async function showMainMenu() {
 
     let blinkState = null;
 
+    const recoverNextPrayer = () => {
+        if (allPrayers.length === 0) return;
+        const now = new Date();
+        const currentMinutes = now.getHours() * 60 + now.getMinutes();
+        for (const p of allPrayers) {
+            if (p.minutes > currentMinutes) {
+                nextPrayerInfo = { ...p, tomorrow: false };
+                return;
+            }
+        }
+        nextPrayerInfo = { ...allPrayers[0], tomorrow: true };
+    };
+
     const advanceToNextPrayer = () => {
-        if (!nextPrayerInfo) return;
         const now = new Date();
         const currentMinutes = now.getHours() * 60 + now.getMinutes();
 
-        const curIdx = nextPrayerInfo.tomorrow ? -1
+        const curIdx = (!nextPrayerInfo || nextPrayerInfo.tomorrow) ? -1
             : allPrayers.findIndex(p => p.name === nextPrayerInfo.name && p.minutes === nextPrayerInfo.minutes);
 
-        let found = false;
         for (let i = curIdx + 1; i < allPrayers.length; i++) {
             if (allPrayers[i].minutes > currentMinutes) {
                 nextPrayerInfo = { ...allPrayers[i], tomorrow: false };
-                found = true;
-                break;
+                return;
             }
         }
 
-        if (!found) {
-            if (tomorrowFajrTime) {
-                const [fh, fm] = tomorrowFajrTime.split(':').map(Number);
-                nextPrayerInfo = { name: 'Fajr', time: tomorrowFajrTime, minutes: fh * 60 + fm, tomorrow: true };
-            } else {
-                nextPrayerInfo = null;
-            }
+        if (allPrayers.length > 0) {
+            nextPrayerInfo = { ...allPrayers[0], tomorrow: true };
+        } else {
+            nextPrayerInfo = null;
         }
     };
 
@@ -211,16 +225,27 @@ async function showMainMenu() {
                 }
             }
         }
+
+        if (!nextPrayerInfo) {
+            recoverNextPrayer();
+        }
         if (!nextPrayerInfo) return null;
+
         const n = new Date();
         const curMins = n.getHours() * 60 + n.getMinutes();
         const curSecs = n.getSeconds();
+
+        if (nextPrayerInfo.tomorrow && curMins < nextPrayerInfo.minutes) {
+            nextPrayerInfo.tomorrow = false;
+        }
+
         let diffSecs;
         if (nextPrayerInfo.tomorrow) {
             diffSecs = ((1440 - curMins) + nextPrayerInfo.minutes) * 60 - curSecs;
         } else {
             diffSecs = (nextPrayerInfo.minutes - curMins) * 60 - curSecs;
         }
+
         if (diffSecs <= 0) {
             blinkState = { prayerName: nextPrayerInfo.name, startedAt: Date.now() };
             return `  ${r(`It's time for ${nextPrayerInfo.name}!`)}`;
@@ -247,7 +272,7 @@ async function showMainMenu() {
     console.log(chalk.dim('─'.repeat(60))); row++;
     console.log(); row++;
 
-    const clockInterval = setInterval(() => {
+    activeClockInterval = setInterval(() => {
         try {
             process.stdout.write('\x1B7');
             process.stdout.write(`\x1B[${clockRow};1H`);
@@ -317,8 +342,6 @@ async function showMainMenu() {
         pageSize: 12,
     });
 
-    clearInterval(clockInterval);
-
     switch (action) {
         case 'daily':
             await showDailyView(mosque);
@@ -336,6 +359,8 @@ async function showMainMenu() {
             break;
 
         case 'config':
+            clearInterval(activeClockInterval);
+            activeClockInterval = null;
             await showConfigMenu();
             break;
 
@@ -363,6 +388,8 @@ async function showMainMenu() {
         }
 
         case 'exit':
+            clearInterval(activeClockInterval);
+            activeClockInterval = null;
             console.log(chalk.dim('\n  Assalamu Alaikum 👋 \n'));
             break;
     }
@@ -380,7 +407,9 @@ async function returnToMenu() {
     if (action === 'menu') {
         await showMainMenu();
     } else {
-        console.log(chalk.dim('\n  Assalamu Alaikum.\n'));
+        clearInterval(activeClockInterval);
+        activeClockInterval = null;
+        console.log(chalk.dim('\n  Assalamu Alaikum 👋 \n'));
     }
 }
 
