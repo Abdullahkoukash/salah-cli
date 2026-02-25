@@ -12,6 +12,10 @@ const config = new Conf({
                 localisation: { type: 'string' },
             },
         },
+        notifyMinutes: {
+            type: 'number',
+            default: 10,
+        },
     },
 });
 
@@ -38,4 +42,12 @@ export function clearConfig() {
 
 export function getConfigPath() {
     return config.path;
+}
+
+export function getNotifyMinutes() {
+    return config.get('notifyMinutes') || 10;
+}
+
+export function setNotifyMinutes(minutes) {
+    config.set('notifyMinutes', minutes);
 }

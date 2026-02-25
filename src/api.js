@@ -110,6 +110,7 @@ export async function fetchMosqueCalendar(slug) {
         jumuaAsDuhr: confData.jumuaAsDuhr || false,
         name: fixRtl(confData.name || null),
         localisation: fixRtl(confData.localisation || null),
+        hijriAdjustment: confData.hijriAdjustment || 0,
     };
 }
 

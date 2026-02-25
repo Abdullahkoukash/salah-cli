@@ -2,8 +2,14 @@ import { Command } from 'commander';
 import { select, input } from '@inquirer/prompts';
 import chalk from 'chalk';
 import { searchMosques, fetchTodayTimes, fetchMosqueCalendar, detectLocation } from './api.js';
-import { saveMosque, getMosque, clearConfig, getConfigPath } from './config.js';
+import { saveMosque, getMosque, clearConfig, getConfigPath, getNotifyMinutes, setNotifyMinutes } from './config.js';
 import { renderDailyTable, renderMonthlyTable, renderWeeklyTable, info, success, warn, error } from './display.js';
+import { getHijriDateString } from './hijri.js';
+import { fork } from 'child_process';
+import fs from 'fs';
+import path from 'path';
+import os from 'os';
+import { fileURLToPath } from 'url';
 
 const program = new Command();
 
@@ -71,6 +77,76 @@ program
     .action(() => {
         clearConfig();
         success('Configuration has been reset.');
+    });
+
+const PID_FILE = path.join(os.homedir(), '.salah-cli-daemon.pid');
+const LOG_FILE = path.join(os.homedir(), '.salah-cli-daemon.log');
+const __filename_resolved = fileURLToPath(import.meta.url);
+const DAEMON_SCRIPT = path.join(path.dirname(__filename_resolved), 'daemon.js');
+
+function isDaemonRunning() {
+    try {
+        const pid = parseInt(fs.readFileSync(PID_FILE, 'utf8').trim(), 10);
+        process.kill(pid, 0);
+        return pid;
+    } catch {
+        try { fs.unlinkSync(PID_FILE); } catch { }
+        return false;
+    }
+}
+
+program
+    .command('daemon')
+    .description('Manage the background prayer notification daemon')
+    .argument('<action>', 'start, stop, or status')
+    .option('-m, --minutes <n>', 'Minutes before prayer to notify', '10')
+    .action(async (action, options) => {
+        try {
+            switch (action) {
+                case 'start': {
+                    const pid = isDaemonRunning();
+                    if (pid) {
+                        warn(`Daemon is already running (PID ${pid}).`);
+                        return;
+                    }
+                    const minutesBefore = options.minutes || '10';
+                    const child = fork(DAEMON_SCRIPT, [minutesBefore], {
+                        detached: true,
+                        stdio: 'ignore',
+                    });
+                    child.unref();
+                    success(`Daemon started (PID ${child.pid}), notifying ${minutesBefore} min before each prayer.`);
+                    info(`Log file: ${LOG_FILE}`);
+                    break;
+                }
+                case 'stop': {
+                    const pid = isDaemonRunning();
+                    if (!pid) {
+                        warn('Daemon is not running.');
+                        return;
+                    }
+                    process.kill(pid, 'SIGTERM');
+                    try { fs.unlinkSync(PID_FILE); } catch { }
+                    success('Daemon stopped.');
+                    break;
+                }
+                case 'status': {
+                    const pid = isDaemonRunning();
+                    if (pid) {
+                        success(`Daemon is running (PID ${pid}).`);
+                        info(`Log file: ${LOG_FILE}`);
+                    } else {
+                        info('Daemon is not running.');
+                        info('Start it with: salah daemon start');
+                    }
+                    break;
+                }
+                default:
+                    error(`Unknown action: "${action}". Use start, stop, or status.`);
+            }
+        } catch (err) {
+            handleError(err);
+        }
     });
 
 async function getTomorrowFajr(slug) {
@@ -174,6 +250,24 @@ async function showMainMenu() {
         return `  ${y.bold(wd)}  ${y('·')}  ${y(ds)}  ${y('·')}  ${y.bold(ts)}`;
     };
 
+    let hijriAdj = 0;
+    if (mosque) {
+        try {
+            const cal = await fetchMosqueCalendar(mosque.slug);
+            if (cal && cal.hijriAdjustment !== undefined) hijriAdj = cal.hijriAdjustment;
+        } catch { }
+    }
+    const hijriParts = getHijriDateString(new Date(), hijriAdj).split(' ');
+    const hijriFormatted = hijriParts[1] + ' ' + hijriParts[0] + ', ' + hijriParts[2];
+    const n0 = new Date();
+    const wd0 = n0.toLocaleDateString('en-US', { weekday: 'long' });
+    const ds0 = n0.toLocaleDateString('en-US', { day: 'numeric', month: 'long', year: 'numeric' });
+    const ts0 = n0.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
+    const datePadLen = Math.max(0, ds0.length - hijriFormatted.length);
+    const hijriPadded = hijriFormatted + ' '.repeat(datePadLen);
+    const wdSpaces = ' '.repeat(wd0.length);
+    const hijriLine = `  ${wdSpaces}  ${y('·')}  ${y(hijriPadded)}  ${y('·')}`;
+
     let blinkState = null;
 
     const recoverNextPrayer = () => {
@@ -262,6 +356,8 @@ async function showMainMenu() {
     };
 
     console.log(); row++;
+    const hijriRow = row;
+    console.log(hijriLine); row++;
     const clockRow = row;
     console.log(buildClockLine()); row++;
     const countdownRow = row;
@@ -328,6 +424,11 @@ async function showMainMenu() {
                 value: 'reset',
                 description: 'Clear your saved mosque',
             },
+            {
+                name: 'Notifications',
+                value: 'notifications',
+                description: 'Manage prayer reminders',
+            },
         );
     }
 
@@ -391,8 +492,118 @@ async function showMainMenu() {
             clearInterval(activeClockInterval);
             activeClockInterval = null;
             console.log(chalk.dim('\n  Assalamu Alaikum 👋 \n'));
+            process.exit(0);
+            break;
+
+        case 'notifications':
+            await showNotificationsMenu();
             break;
     }
+}
+
+async function showNotificationsMenu() {
+    const pid = isDaemonRunning();
+    const minutes = getNotifyMinutes();
+
+    console.log();
+    console.log(chalk.dim('─'.repeat(52)));
+    console.log(`  ${chalk.hex('#4DD0E1').bold('Notification Settings')}`);
+    console.log(chalk.dim('─'.repeat(52)));
+    console.log();
+    console.log(`  ${chalk.dim('Status:')}     ${pid ? chalk.hex('#66BB6A').bold('Running') + chalk.dim(` (PID ${pid})`) : chalk.hex('#EF5350')('Not running')}`);
+    console.log(`  ${chalk.dim('Remind:')}     ${chalk.white.bold(minutes + ' min')} before each prayer`);
+    console.log(`  ${chalk.dim('At prayer:')}  ${chalk.white.bold('Always')}`);
+    console.log();
+
+    const choices = [];
+
+    if (pid) {
+        choices.push({
+            name: 'Stop notifications',
+            value: 'stop',
+        });
+        choices.push({
+            name: 'Restart notifications',
+            value: 'restart',
+        });
+    } else {
+        choices.push({
+            name: 'Start notifications',
+            value: 'start',
+        });
+    }
+
+    choices.push({
+        name: `Change reminder time (currently ${minutes} min)`,
+        value: 'time',
+    });
+
+    choices.push({
+        name: 'Back to menu',
+        value: 'back',
+    });
+
+    const action = await select({
+        message: 'Notification options:',
+        choices,
+    });
+
+    if (action === 'back') {
+        await showMainMenu();
+        return;
+    }
+
+    switch (action) {
+        case 'start': {
+            const mins = String(getNotifyMinutes());
+            const child = fork(DAEMON_SCRIPT, [mins], {
+                detached: true,
+                stdio: 'ignore',
+            });
+            child.unref();
+            success(`Notifications started! Reminders ${mins} min before each prayer.`);
+            break;
+        }
+        case 'stop': {
+            process.kill(pid, 'SIGTERM');
+            try { fs.unlinkSync(PID_FILE); } catch { }
+            success('Notifications stopped.');
+            break;
+        }
+        case 'restart': {
+            process.kill(pid, 'SIGTERM');
+            try { fs.unlinkSync(PID_FILE); } catch { }
+            await new Promise(r => setTimeout(r, 500));
+            const mins = String(getNotifyMinutes());
+            const child = fork(DAEMON_SCRIPT, [mins], {
+                detached: true,
+                stdio: 'ignore',
+            });
+            child.unref();
+            success(`Notifications restarted with ${mins} min reminder.`);
+            break;
+        }
+        case 'time': {
+            const newMinutes = await select({
+                message: 'Remind me before each prayer:',
+                choices: [
+                    { name: '5 minutes before', value: 5 },
+                    { name: '10 minutes before', value: 10 },
+                    { name: '15 minutes before', value: 15 },
+                    { name: '20 minutes before', value: 20 },
+                    { name: '30 minutes before', value: 30 },
+                ],
+            });
+            setNotifyMinutes(newMinutes);
+            success(`Reminder set to ${newMinutes} minutes before prayer.`);
+            if (isDaemonRunning()) {
+                info('Restart notifications to apply the new setting.');
+            }
+            break;
+        }
+    }
+
+    await returnToMenu();
 }
 
 async function returnToMenu() {
@@ -410,6 +621,7 @@ async function returnToMenu() {
         clearInterval(activeClockInterval);
         activeClockInterval = null;
         console.log(chalk.dim('\n  Assalamu Alaikum 👋 \n'));
+        process.exit(0);
     }
 }
 

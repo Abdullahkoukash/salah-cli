@@ -11,6 +11,8 @@ A command-line tool that displays daily prayer times (Adhan and Iqama) sourced f
 - Search and save your local mosque by city or name
 - View today's Adhan and Iqama times
 - Weekly and monthly prayer calendars
+- Desktop notifications before each prayer
+- Background daemon for automatic prayer reminders
 
 ## Requirements
 
@@ -41,7 +43,7 @@ npm link
 salah
 ```
 
-Opens the main menu with a live clock, next prayer countdown, and access to all views.
+Opens the main menu with a live clock, Hijri date, next prayer countdown, and access to all views.
 
 ### Quick commands
 
@@ -58,12 +60,24 @@ salah config -c "Berlin"  # Search mosques in a specific city
 salah reset               # Clear saved mosque
 ```
 
+### Notifications
+
+You can manage prayer notifications from the interactive menu under **Notifications**, or via the command line:
+
+```
+salah daemon start        # Start background notifier
+salah daemon start -m 15  # Notify 15 minutes before each prayer
+salah daemon status       # Check if the daemon is running
+salah daemon stop         # Stop the daemon
+```
+
+The daemon sends desktop notifications before each prayer and when the prayer time arrives. It keeps running in the background even when the terminal is closed.
+
 ## How it works
 
 On first run, the app detects your country via IP geolocation and prompts you to search for a mosque. Once selected, the mosque is saved locally and prayer times are fetched from the Mawaqit API on each use.
 
-The daily view shows Adhan times alongside Iqama times (where available). The weekly and monthly views pull from the mosque's published calendar.
-
+The daily view shows Adhan times alongside Iqama times (where available). The weekly and monthly views pull from the mosque's published calendar. The Hijri date is calculated using the mosque's configured calendar adjustment from Mawaqit.
 
 ## License
 MIT
