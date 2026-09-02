@@ -11,8 +11,6 @@ A command-line tool that displays daily prayer times (Adhan and Iqama) sourced f
 - Search and save your local mosque by city or name
 - View today's Adhan and Iqama times
 - Weekly and monthly prayer calendars
-- Desktop notifications before each prayer
-- Background daemon for automatic prayer reminders
 
 ## Requirements
 
@@ -59,19 +57,6 @@ salah config              # Search and select a mosque
 salah config -c "Berlin"  # Search mosques in a specific city
 salah reset               # Clear saved mosque
 ```
-
-### Notifications
-
-You can manage prayer notifications from the interactive menu under **Notifications**, or via the command line:
-
-```
-salah daemon start        # Start background notifier
-salah daemon start -m 15  # Notify 15 minutes before each prayer
-salah daemon status       # Check if the daemon is running
-salah daemon stop         # Stop the daemon
-```
-
-The daemon sends desktop notifications before each prayer and when the prayer time arrives. It keeps running in the background even when the terminal is closed.
 
 ## How it works
 
